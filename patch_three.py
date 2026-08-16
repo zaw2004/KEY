@@ -5,6 +5,9 @@ patch_three.py — Patch THREE values in the sirzipp .so in one run:
   2. Embedded ID (zlib table chunk 13 — must be exactly 10 digits)
   3. BOT_TOKEN   (zlib table chunk 14 — must be exactly 46 characters)
 
+Auto-detection: reads the CURRENT values from the binary instead of assuming
+hardcoded defaults, so it works on different builds of the .so.
+
 Usage (Termux / Replit):
     python3 patch_three.py sirzipp.cpython-311-x86_64-linux-gnu.so
 
@@ -21,25 +24,42 @@ import zlib
 import struct
 
 ZLIB_OFF = 0x81C78
-ZLIB_LEN = 5548
+ALLOC = 5552            # PyMemoryView buffer length (zlib stream <= 5548)
 ADMIN_OFF = 0x9b32
-OLD_ADMIN = 8556036826
-OLD_ADMIN_LE = struct.pack('<q', OLD_ADMIN)
-OLD_TOKEN = b'8960099014:AAGTdr-eMULHi5RNUgWDQf9eH71bq5jRi5w'
+
+
+def load_table(data):
+    """Decode the zlib string table, trying wbits variants."""
+    for wbits in (13, -15, 9, 12, 14, 15):
+        try:
+            return zlib.decompress(bytes(data[ZLIB_OFF:ZLIB_OFF + ALLOC]), wbits), wbits
+        except Exception:
+            continue
+    return None, None
 
 
 def compress_fit(table):
+    """Recompress the patched table to fit inside the 5548-byte region."""
+    for strat in (zlib.Z_FIXED,):
+        for wbits in (13, 12, 14, 15):
+            try:
+                co = zlib.compressobj(9, zlib.DEFLATED, wbits, strat)
+            except ValueError:
+                continue
+            cand = co.compress(table) + co.flush()
+            if len(cand) <= 5548:
+                return cand
     for wbits in (13, 12, 14, 15):
         co = zlib.compressobj(9, zlib.DEFLATED, wbits)
         cand = co.compress(table) + co.flush()
-        if len(cand) <= ZLIB_LEN:
+        if len(cand) <= 5548:
             return cand
     for level in range(9, 0, -1):
         cand = zlib.compress(table, level)
-        if len(cand) <= ZLIB_LEN:
+        if len(cand) <= 5548:
             return cand
     comp = zlib.compress(table)
-    print(f'WARNING: recompressed size {len(comp)} exceeds {ZLIB_LEN}; writing anyway.')
+    print(f'WARNING: recompressed size {len(comp)} exceeds 5548; writing anyway.')
     return comp
 
 
@@ -71,10 +91,18 @@ def main():
         print('ERROR: not an ELF binary.')
         sys.exit(2)
 
+    # Auto-detect current values
     cur_admin = struct.unpack('<q', bytes(data[ADMIN_OFF:ADMIN_OFF + 8]))[0]
-    table = zlib.decompress(bytes(data[ZLIB_OFF:ZLIB_OFF + ZLIB_LEN]))
+    table, wbits = load_table(data)
+    if table is None:
+        print('ERROR: cannot decode the string table in this binary.')
+        sys.exit(3)
+
+    old_emb = table[0x67:0x71]
+    old_tok = table[0x71:0x9f]
     print('=== Patch three values in one run ===')
-    print(f'Current: admin ID = {cur_admin}, embedded ID = {table[0x67:0x71].decode()}')
+    print(f'Current: admin ID = {cur_admin}, embedded ID = {old_emb.decode()}')
+    print(f'Current token : {old_tok.decode()} ({len(old_tok)} chars)')
     print()
 
     admin = ask(f'New admin ID (or Enter to skip): ', digits_only=True)
@@ -90,39 +118,37 @@ def main():
     if admin:
         new_id = int(admin)
         new_le = struct.pack('<q', new_id)
-        if OLD_ADMIN_LE in data:
-            data = data.replace(OLD_ADMIN_LE, new_le, 1)
-        else:
-            print('NOTE: default pattern not found — patching fixed offset 0x9b32.')
-            data[ADMIN_OFF:ADMIN_OFF + 8] = new_le
+        data[ADMIN_OFF:ADMIN_OFF + 8] = new_le
         changes.append(f'admin ID {cur_admin} -> {new_id}')
 
     if emb:
         new_emb = emb.encode()
-        old_emb = table[0x67:0x71]
         if new_emb == old_emb:
             emb = ''
-        elif old_emb in table:
+        else:
             table = table.replace(old_emb, new_emb, 1)
             changes.append(f'embedded ID {old_emb.decode()} -> {emb}')
-        else:
-            print('WARNING: embedded ID not found in table — skipped.')
-            emb = ''
 
     if tok:
         new_tok = tok.encode()
-        if new_tok == OLD_TOKEN:
+        if new_tok == old_tok:
             tok = ''
-        elif OLD_TOKEN in table:
-            table = table.replace(OLD_TOKEN, new_tok, 1)
-            changes.append('bot token replaced (46 chars)')
+        elif len(new_tok) != 46:
+            print(f'ERROR: token must be exactly 46 chars (got {len(new_tok)}). Aborting.')
+            sys.exit(4)
         else:
-            print('WARNING: old token not found in table — skipped.')
-            tok = ''
+            table = table.replace(old_tok, new_tok, 1)
+            changes.append('bot token replaced (46 chars)')
 
     if any((emb, tok)):
-        comp = compress_fit(bytes(table))
-        data[ZLIB_OFF:ZLIB_OFF + ZLIB_LEN] = comp + b'\x00' * (ZLIB_LEN - len(comp))
+        comp = compress_fit(table)
+        data[ZLIB_OFF:ZLIB_OFF + ALLOC] = comp + b'\x00' * (ALLOC - len(comp))
+        # self-check: must decompress back cleanly
+        try:
+            chk = zlib.decompress(data[ZLIB_OFF:ZLIB_OFF + ALLOC], wbits)
+        except Exception as e:
+            print(f'ERROR: patched table does not decompress ({e}). Aborting.')
+            sys.exit(5)
 
     out = so_path.replace('.so', '_three.so')
     open(out, 'wb').write(data)
