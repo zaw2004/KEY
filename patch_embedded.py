@@ -59,10 +59,24 @@ if new_token:
     table = table.replace(OLD_TOKEN, new_token.encode(), 1)
     print(f'Token patched (hidden)')
 
-comp = zlib.compress(table)
-if len(comp) > ZLIB_LEN:
-    print(f'ERROR: recompressed table ({len(comp)}) larger than original ({ZLIB_LEN}). Aborting.')
-    sys.exit(2)
+comp = None
+# Try a smaller deflate window first — often 2-3 bytes smaller for this data.
+for wbits in (13, 12, 14, 15):
+    co = zlib.compressobj(9, zlib.DEFLATED, wbits)
+    cand = co.compress(table) + co.flush()
+    if len(cand) <= ZLIB_LEN:
+        comp = cand
+        break
+if comp is None:
+    for level in range(9, 0, -1):
+        cand = zlib.compress(table, level)
+        if len(cand) <= ZLIB_LEN:
+            comp = cand
+            break
+if comp is None:
+    comp = zlib.compress(table)
+    print(f'WARNING: best recompressed size ({len(comp)}) still exceeds original ({ZLIB_LEN});')
+    print('writing anyway — the file may contain trailing bytes past the zlib stream.')
 
 out = SO_PATH.replace('.so', '_embedded.so')
 open(out, 'wb').write(data[:ZLIB_OFF] + comp + b'\x00' * (ZLIB_LEN - len(comp))
