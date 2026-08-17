@@ -353,8 +353,9 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback,
                                          pattern=r'^p_(admin|embed|token|all)$|^cancel$'))
     app.add_handler(CallbackQueryHandler(retry_callback, pattern='^retry$'))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
-                                   _apply_inner, block=False))
+    app.add_handler(MessageHandler(
+        filters.Regex(r'(?i)\b(admin|embed|token)\s*:') & ~filters.COMMAND,
+        _apply_inner, block=False))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    handle_text))
     app.run_polling()
