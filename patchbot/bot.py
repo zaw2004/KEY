@@ -253,6 +253,13 @@ async def _apply_main(update, ctx):
     st = _state(uid)
     text = update.message.text
 
+    # sanity: if the filename step was skipped somehow, ask again
+    if not st.get('out_name'):
+        st['next'] = 'name'
+        await update.message.reply_text(
+            'Output filename was not set — please send the new output '
+            'filename (ending with `.so`, e.g. `my_bot.so`):')
+        return
     want = st['want']
     cur = st['cur']
     vals = {'admin': None, 'embed': None, 'token': None}
