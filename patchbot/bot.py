@@ -193,16 +193,22 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if st.get('next') != 'name':
         return
     name = update.message.text.strip()
-    if not name.lower().endswith('.so') or not name.replace('_', '').replace('-', '').isalnum():
+    if not name.lower().endswith('.so') or len(name) <= 3:
         await update.message.reply_text(
-            'Invalid name — use letters/digits/dash/underscore and end '
-            'with `.so` (e.g. `my_bot.so`):')
+            'Invalid name — it must end with `.so` '
+            '(e.g. `my_bot.so`):')
         return
-    st['out_name'] = name
+    # normalize: keep only letters/digits/dash/underscore/dot
+    safe = ''.join(c for c in name
+                   if c.isalnum() or c in '_.-')
+    if safe != name:
+        await update.message.reply_text(
+            f'Name adjusted to: `{safe}` (unsafe characters removed).')
+    st['out_name'] = safe
     st['inputs'] = {}
     st['next'] = 'values'
     await update.message.reply_text(
-        f'Output file will be named `{name}`.\n\n'
+        f'Output file will be named `{safe}`.\n\n'
         f'Your balance: *{cr.get_credits(uid)}* credits. '
         f'Sending it costs *{PATCH_COST} credit*.\n'
         'Type the new values in this format, one per line '
