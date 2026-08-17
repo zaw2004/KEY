@@ -222,27 +222,44 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown')
 
 
-async def apply_patch(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+async def _apply_inner(update, ctx):
     uid = update.effective_user.id
     st = _state(uid)
-    if st.get('next') != 'values':
-        return
     text = update.message.text
     if '/cancel' in text:
         _clear(uid)
         await update.message.reply_text('Cancelled.')
         return
+    try:
+        await _apply_main(update, ctx)
+    except Exception as e:
+        log.exception('apply_patch failed: %s', e)
+        try:
+            await update.message.reply_text(
+                f'Something went wrong: {e}. Please try again '
+                '(/start).')
+        except Exception:
+            pass
+        _clear(uid)
+
+
+async def _apply_main(update, ctx):
+    uid = update.effective_user.id
+    st = _state(uid)
+    text = update.message.text
 
     want = st['want']
     cur = st['cur']
     vals = {'admin': None, 'embed': None, 'token': None}
     for line in text.splitlines():
         line = line.strip()
-        if ':' in line:
-            k, v = line.split(':', 1)
-            k, v = k.strip().lower(), v.strip()
-            if k in vals and v and v != '.':
-                vals[k] = v
+        if ':' not in line:
+            continue
+        k, _, v = line.partition(':')
+        k, v = k.strip().lower(), v.strip()
+        if k in vals and v and v != '.':
+            vals[k] = v
+        log.info('parsed line %r -> %s=%r', line, k, v)
 
     need = {'admin' if 'admin' in want else None,
             'embed' if 'embed' in want else None,
@@ -326,6 +343,9 @@ def main():
     app.add_handler(CallbackQueryHandler(retry_callback, pattern='^retry$'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    handle_text))
+    app.add_handler(MessageHandler(
+        filters.Regex(r'\s*\S+\s*:') & ~filters.COMMAND,
+        _apply_inner, block=False))
     app.run_polling()
 
 
