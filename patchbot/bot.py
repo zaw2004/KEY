@@ -192,7 +192,12 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     st = _state(uid)
     if st.get('next') != 'name':
         return
-    name = update.message.text.strip()
+    text = update.message.text.strip()
+    if 'admin:' in text or 'embed:' in text or 'token:' in text:
+        # values text arrived while waiting for the filename — ignore so
+        # the dedicated apply handler can process it
+        return
+    name = text
     if not name.lower().endswith('.so') or len(name) <= 3:
         await update.message.reply_text(
             'Invalid name — it must end with `.so` '
@@ -342,10 +347,9 @@ def main():
                                          pattern=r'^p_(admin|embed|token|all)$|^cancel$'))
     app.add_handler(CallbackQueryHandler(retry_callback, pattern='^retry$'))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   _apply_inner, block=False))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    handle_text))
-    app.add_handler(MessageHandler(
-        filters.Regex(r'\s*\S+\s*:') & ~filters.COMMAND,
-        _apply_inner, block=False))
     app.run_polling()
 
 
