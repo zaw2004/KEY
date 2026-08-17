@@ -119,7 +119,19 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     st['file'] = os.path.join(tempfile.mkdtemp(prefix='patchbot_'),
                               f.file_name)
     msg = await update.message.reply_text('Downloading file, please wait...')
-    await f.download_to_drive(st['file'])
+    try:
+        got = await f.get_file()
+        await got.download_to_drive(st['file'])
+    except TelegramError as e:
+        _clear(uid)
+        await msg.edit_text(f'Download failed: {e}. Please send the '
+                            'file again.')
+        return
+    except OSError as e:
+        _clear(uid)
+        await msg.edit_text(f'Download failed: {e}. Please send the '
+                            'file again.')
+        return
 
     try:
         cur = read_current(open(st['file'], 'rb').read())
